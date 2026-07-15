@@ -15,13 +15,15 @@ npm run dev
 
 ## 配置 AI 对话地址
 
-AI 对话网站需要单独运行或部署。复制环境变量示例文件：
+AI 对话网站需要单独运行或部署。复制环境变量示例文件。
+
+macOS / Linux：
 
 ```bash
 cp .env.example .env.local
 ```
 
-Windows PowerShell 可以使用：
+Windows PowerShell：
 
 ```powershell
 Copy-Item .env.example .env.local
