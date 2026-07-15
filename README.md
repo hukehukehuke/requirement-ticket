@@ -4,18 +4,39 @@
 
 ## 本地运行
 
-先启动 AI 对话网站：
+安装依赖并启动工单网站：
 
 ```bash
-cd C:\Users\23814\Desktop\webapp-conversation
+npm install
 npm run dev
 ```
 
-再启动工单网站：
+默认访问地址为 `http://localhost:5173`。
+
+## 配置 AI 对话地址
+
+AI 对话网站需要单独运行或部署。复制环境变量示例文件：
 
 ```bash
-cd C:\Users\23814\Desktop\requirement-ticket\requirement-ticket
-npm run dev
+cp .env.example .env.local
 ```
 
-默认 AI 对话地址为 `http://localhost:3000`。部署或端口变化时，复制 `.env.example` 为 `.env.local` 并修改 `VITE_AI_CHAT_URL`。
+Windows PowerShell 可以使用：
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+然后在 `.env.local` 中填写 AI 对话网站地址：
+
+```env
+VITE_AI_CHAT_URL=http://localhost:3000
+```
+
+正式部署时请改为可公开访问的 HTTPS 地址，例如：
+
+```env
+VITE_AI_CHAT_URL=https://ai.example.com
+```
+
+修改环境变量后需要重新启动或重新构建本项目。
