@@ -94,6 +94,16 @@
           <span class="ai-button-icon" aria-hidden="true">✦</span>
           AI对话
         </button>
+        <button
+          type="button"
+          class="btn btn-doc"
+          @click="generateDoc"
+          :disabled="isGeneratingDoc"
+        >
+          <span v-if="isGeneratingDoc" class="loading-spinner"></span>
+          <span v-else class="doc-button-icon">📄</span>
+          {{ isGeneratingDoc ? 'AI处理中，请稍候...' : '生成需求文档' }}
+        </button>
         <button type="button" class="btn btn-secondary" @click="resetForm">重置</button>
         <button type="submit" class="btn btn-primary" :disabled="isSubmitting">
           {{ isSubmitting ? '提交中...' : '提交工单' }}
@@ -109,17 +119,6 @@
       aria-labelledby="ai-dialog-title"
     >
       <div class="ai-dialog">
-        <div class="ai-dialog-header">
-          <h3 id="ai-dialog-title">AI需求助手</h3>
-          <button
-            type="button"
-            class="ai-dialog-close"
-            :disabled="!isAiReady"
-            @click="endAiDialog"
-          >
-            结束对话
-          </button>
-        </div>
         <div class="ai-dialog-body">
           <div v-if="!isAiReady" class="ai-dialog-loading">正在加载AI对话...</div>
           <iframe
@@ -175,9 +174,11 @@ const aiIframe = ref(null)
 const isAiDialogOpen = ref(false)
 const isAiReady = ref(false)
 const iframeKey = ref(0)
+const aiTranscript = ref('')
+const isGeneratingDoc = ref(false)
 const AI_CHAT_URL = import.meta.env.VITE_AI_CHAT_URL || 'http://localhost:3000'
+const DOC_GENERATOR_URL = import.meta.env.VITE_DOC_GENERATOR_URL || 'http://localhost:5000'
 
-// Generate a unique URL for each conversation to ensure fresh iframe
 const aiChatSrc = computed(() => {
   const baseUrl = AI_CHAT_URL.endsWith('/') ? AI_CHAT_URL.slice(0, -1) : AI_CHAT_URL
   return `${baseUrl}?t=${Date.now()}&r=${Math.random().toString(36).substring(2, 8)}`
@@ -197,15 +198,19 @@ const handleAiMessage = async (event) => {
 
   if (event.data.type === 'ready') {
     isAiReady.value = true
-    // Send init command to start the conversation
     aiIframe.value?.contentWindow?.postMessage({ type: 'init', payload: {} }, event.origin)
     return
   }
 
-  // Handle conversationEnded event from iframe
   if (event.data.type === 'conversationEnded') {
-    const transcript = event.data.payload?.content?.trim()
+    let transcript = event.data.payload?.content?.trim()
     if (transcript) {
+      // 过滤掉 <thinking>...</thinking> 标签内容（AI 思考过程）
+      transcript = transcript.replace(/<thinking>[\s\S]*?<\/thinking>/g, '').trim()
+      // 同时过滤掉可能单独出现的 <thinking> 标签
+      transcript = transcript.replace(/<thinking>/g, '').replace(/<\/thinking>/g, '').trim()
+
+      aiTranscript.value = transcript
       form.description = form.description.trim()
         ? `${form.description.trim()}\n\n${transcript}`
         : transcript
@@ -216,24 +221,106 @@ const handleAiMessage = async (event) => {
     document.querySelector('#description')?.focus()
     return
   }
+
+  if (event.data.type === 'backToParent') {
+    // 返回按钮 - 只关闭弹窗，保留对话内容
+    closeAiDialog()
+    return
+  }
 }
 
 const openAiDialog = () => {
-  // Increment key to force iframe recreation for fresh conversation
+  // 如果弹窗已打开，不再重新创建 iframe（保留对话内容）
+  if (isAiDialogOpen.value) return
   iframeKey.value++
   isAiReady.value = false
   isAiDialogOpen.value = true
 }
 
 const closeAiDialog = () => {
+  // 只关闭弹窗，不重置状态，保留对话内容
   isAiDialogOpen.value = false
   isAiReady.value = false
 }
 
 const endAiDialog = () => {
   if (!isAiReady.value || !aiIframe.value?.contentWindow) return
-  // Send endConversation to get the transcript from iframe
   aiIframe.value.contentWindow.postMessage({ type: 'endConversation' }, new URL(AI_CHAT_URL, window.location.href).origin)
+}
+
+const generateDoc = async () => {
+  if (isGeneratingDoc.value) return
+
+  const hasContent = form.description.trim() || aiTranscript.value
+  if (!hasContent) {
+    alert('请先填写详细描述或使用AI对话生成内容')
+    return
+  }
+
+  isGeneratingDoc.value = true
+
+  try {
+    const categoryMap = {
+      'feature': '新增功能',
+      'improvement': '优化改进',
+      'bug': '缺陷修复',
+      'other': '其他'
+    }
+    const priorityMap = {
+      'low': '低',
+      'medium': '中',
+      'high': '高',
+      'urgent': '紧急'
+    }
+
+    const combinedDescription = `
+=== 工单基本信息 ===
+工单标题：${form.title}
+需求分类：${categoryMap[form.category] || form.category}
+优先级：${priorityMap[form.priority] || form.priority}
+联系方式：${form.contact || '无'}
+
+=== 用户填写的需求描述 ===
+${form.description}
+
+${aiTranscript.value ? `=== AI对话记录 ===
+${aiTranscript.value}` : ''}
+    `.trim()
+
+    const response = await fetch(`${DOC_GENERATOR_URL}/generate-from-transcript`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        title: form.title || '需求文档',
+        description: combinedDescription,
+        transcript: ''
+      })
+    })
+
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || '生成失败')
+    }
+
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const filename = (form.title || '需求文档') + '.docx'
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+
+  } catch (error) {
+    console.error('生成文档失败:', error)
+    alert(`生成文档失败: ${error.message}`)
+  } finally {
+    isGeneratingDoc.value = false
+  }
 }
 
 onMounted(() => window.addEventListener('message', handleAiMessage))
@@ -293,6 +380,7 @@ const resetForm = () => {
   errors.category = ''
   errors.priority = ''
   errors.description = ''
+  aiTranscript.value = ''
 }
 
 const closeSuccess = () => {
@@ -526,6 +614,46 @@ const closeSuccess = () => {
   line-height: 1;
 }
 
+.btn-doc {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.24);
+}
+
+.btn-doc:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.34);
+}
+
+.btn-doc:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.doc-button-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .ai-dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -549,54 +677,12 @@ const closeSuccess = () => {
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35);
 }
 
-.ai-dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 14px 18px 14px 22px;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.ai-dialog-header h3 {
-  margin: 0;
-  color: #111827;
-  font-size: 17px;
-}
-
-.ai-dialog-header p {
-  margin: 3px 0 0;
-  color: #6b7280;
-  font-size: 12px;
-}
-
-.ai-dialog-close {
-  min-width: 88px;
-  height: 36px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 9px;
-  background: #4f46e5;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.ai-dialog-close:hover {
-  background: #4338ca;
-}
-
-.ai-dialog-close:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-
 .ai-dialog-body {
   position: relative;
   flex: 1;
   min-height: 0;
   background: #e2e8f0;
+  border-radius: 16px;
 }
 
 .ai-dialog-loading {
