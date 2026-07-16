@@ -110,10 +110,7 @@
     >
       <div class="ai-dialog">
         <div class="ai-dialog-header">
-          <div>
-            <h3 id="ai-dialog-title">AI对话</h3>
-            <p>结束对话后，聊天内容将自动填入详细描述</p>
-          </div>
+          <h3 id="ai-dialog-title">AI需求助手</h3>
           <button
             type="button"
             class="ai-dialog-close"
@@ -126,9 +123,11 @@
         <div class="ai-dialog-body">
           <div v-if="!isAiReady" class="ai-dialog-loading">正在加载AI对话...</div>
           <iframe
+            v-if="isAiDialogOpen"
+            :key="iframeKey"
             ref="aiIframe"
             class="ai-dialog-iframe"
-            :src="AI_CHAT_URL"
+            :src="aiChatSrc"
             title="AI需求对话"
             allow="clipboard-read; clipboard-write; fullscreen"
           ></iframe>
@@ -148,7 +147,7 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, reactive } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, reactive, computed } from 'vue'
 
 const emit = defineEmits(['submit'])
 
@@ -175,7 +174,14 @@ const ticketId = ref('')
 const aiIframe = ref(null)
 const isAiDialogOpen = ref(false)
 const isAiReady = ref(false)
+const iframeKey = ref(0)
 const AI_CHAT_URL = import.meta.env.VITE_AI_CHAT_URL || 'http://localhost:3000'
+
+// Generate a unique URL for each conversation to ensure fresh iframe
+const aiChatSrc = computed(() => {
+  const baseUrl = AI_CHAT_URL.endsWith('/') ? AI_CHAT_URL.slice(0, -1) : AI_CHAT_URL
+  return `${baseUrl}?t=${Date.now()}&r=${Math.random().toString(36).substring(2, 8)}`
+})
 
 const isExpectedAiOrigin = (origin) => {
   try {
@@ -191,25 +197,30 @@ const handleAiMessage = async (event) => {
 
   if (event.data.type === 'ready') {
     isAiReady.value = true
-    aiIframe.value?.contentWindow?.postMessage({ type: 'newChat' }, event.origin)
+    // Send init command to start the conversation
+    aiIframe.value?.contentWindow?.postMessage({ type: 'init', payload: {} }, event.origin)
     return
   }
 
-  if (event.data.type !== 'conversationEnded') return
-
-  const transcript = event.data.payload?.content?.trim()
-  if (transcript) {
-    form.description = form.description.trim()
-      ? `${form.description.trim()}\n\n${transcript}`
-      : transcript
-    errors.description = ''
+  // Handle conversationEnded event from iframe
+  if (event.data.type === 'conversationEnded') {
+    const transcript = event.data.payload?.content?.trim()
+    if (transcript) {
+      form.description = form.description.trim()
+        ? `${form.description.trim()}\n\n${transcript}`
+        : transcript
+      errors.description = ''
+    }
+    closeAiDialog()
+    await nextTick()
+    document.querySelector('#description')?.focus()
+    return
   }
-  closeAiDialog()
-  await nextTick()
-  document.querySelector('#description')?.focus()
 }
 
 const openAiDialog = () => {
+  // Increment key to force iframe recreation for fresh conversation
+  iframeKey.value++
   isAiReady.value = false
   isAiDialogOpen.value = true
 }
@@ -221,6 +232,7 @@ const closeAiDialog = () => {
 
 const endAiDialog = () => {
   if (!isAiReady.value || !aiIframe.value?.contentWindow) return
+  // Send endConversation to get the transcript from iframe
   aiIframe.value.contentWindow.postMessage({ type: 'endConversation' }, new URL(AI_CHAT_URL, window.location.href).origin)
 }
 
@@ -247,33 +259,12 @@ const formatFileSize = (bytes) => {
 }
 
 const validate = () => {
-  let valid = true
-  errors.title = ''
-  errors.category = ''
-  errors.priority = ''
-  errors.description = ''
+  errors.title = form.title.trim() ? '' : '请输入工单标题'
+  errors.category = form.category ? '' : '请选择需求分类'
+  errors.priority = form.priority ? '' : '请选择优先级'
+  errors.description = form.description.trim() ? '' : '请输入详细描述'
 
-  if (!form.title.trim()) {
-    errors.title = '请输入工单标题'
-    valid = false
-  }
-
-  if (!form.category) {
-    errors.category = '请选择需求分类'
-    valid = false
-  }
-
-  if (!form.priority) {
-    errors.priority = '请选择优先级'
-    valid = false
-  }
-
-  if (!form.description.trim()) {
-    errors.description = '请输入详细描述'
-    valid = false
-  }
-
-  return valid
+  return form.title.trim() && form.category && form.priority && form.description.trim()
 }
 
 const handleSubmit = async () => {
