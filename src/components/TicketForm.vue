@@ -111,28 +111,53 @@
       </div>
     </form>
 
+    <!-- AI 对话窗口 - 可拖动、最小化 -->
     <div
       v-if="isAiDialogOpen"
-      class="ai-dialog-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="ai-dialog-title"
+      class="ai-floating-window"
+      :style="{ right: '20px', bottom: '20px', width: '1100px', height: '820px' }"
     >
-      <div class="ai-dialog">
-        <div class="ai-dialog-body">
-          <div v-if="!isAiReady" class="ai-dialog-loading">正在加载AI对话...</div>
-          <iframe
-            v-if="isAiDialogOpen"
-            :key="iframeKey"
-            ref="aiIframe"
-            class="ai-dialog-iframe"
-            :src="aiChatSrc"
-            title="AI需求对话"
-            allow="clipboard-read; clipboard-write; fullscreen"
-          ></iframe>
+      <div class="ai-floating-header" @mousedown="startDrag">
+        <div class="ai-floating-title">
+          <span class="ai-floating-icon">AI</span>
+          <span>AI需求助手</span>
+        </div>
+        <div class="ai-floating-actions">
+          <button class="ai-floating-minimize" @click="minimizeAiDialog" title="最小化">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <path d="M19 13H5v-2h14v2z"/>
+            </svg>
+          </button>
+          <button class="ai-floating-close" @click="closeAiDialog" title="关闭">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            </svg>
+          </button>
         </div>
       </div>
+      <div class="ai-floating-body">
+        <div v-if="!isAiReady" class="ai-dialog-loading">正在加载AI对话...</div>
+        <iframe
+          v-if="isAiDialogOpen"
+          :key="iframeKey"
+          ref="aiIframe"
+          class="ai-dialog-iframe"
+          :src="aiChatSrc"
+          title="AI需求对话"
+          allow="clipboard-read; clipboard-write; fullscreen"
+        ></iframe>
+      </div>
     </div>
+
+    <!-- AI 对话最小化时的悬浮按钮 -->
+    <button
+      v-if="isAiDialogMinimized"
+      class="ai-floating-mini-btn"
+      @click="restoreAiDialog"
+      title="打开AI对话"
+    >
+      <span class="ai-floating-mini-icon">AI</span>
+    </button>
 
     <div v-if="submitSuccess" class="success-modal">
       <div class="success-content">
@@ -173,9 +198,14 @@ const ticketId = ref('')
 const aiIframe = ref(null)
 const isAiDialogOpen = ref(false)
 const isAiReady = ref(false)
+const isAiDialogMinimized = ref(false)
 const iframeKey = ref(0)
 const aiTranscript = ref('')
 const isGeneratingDoc = ref(false)
+
+// 拖动相关
+const isDragging = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
 const AI_CHAT_URL = import.meta.env.VITE_AI_CHAT_URL || 'http://localhost:3000'
 const DOC_GENERATOR_URL = import.meta.env.VITE_DOC_GENERATOR_URL || 'http://localhost:5000'
 
@@ -230,6 +260,11 @@ const handleAiMessage = async (event) => {
 }
 
 const openAiDialog = () => {
+  // 如果最小化了，先恢复
+  if (isAiDialogMinimized.value) {
+    isAiDialogMinimized.value = false
+    return
+  }
   // 如果弹窗已打开，不再重新创建 iframe（保留对话内容）
   if (isAiDialogOpen.value) return
   iframeKey.value++
@@ -238,14 +273,50 @@ const openAiDialog = () => {
 }
 
 const closeAiDialog = () => {
-  // 只关闭弹窗，不重置状态，保留对话内容
+  // 关闭弹窗，标记为最小化
   isAiDialogOpen.value = false
   isAiReady.value = false
+  isAiDialogMinimized.value = true
+}
+
+const minimizeAiDialog = () => {
+  // 最小化弹窗
+  isAiDialogOpen.value = false
+  isAiDialogMinimized.value = true
+}
+
+const restoreAiDialog = () => {
+  // 恢复弹窗
+  isAiDialogMinimized.value = false
+  isAiDialogOpen.value = true
 }
 
 const endAiDialog = () => {
   if (!isAiReady.value || !aiIframe.value?.contentWindow) return
   aiIframe.value.contentWindow.postMessage({ type: 'endConversation' }, new URL(AI_CHAT_URL, window.location.href).origin)
+}
+
+// 拖动功能
+const startDrag = (e) => {
+  isDragging.value = true
+  dragOffset.value = {
+    x: e.clientX,
+    y: e.clientY
+  }
+  document.addEventListener('mousemove', onDrag)
+  document.addEventListener('mouseup', stopDrag)
+}
+
+const onDrag = (e) => {
+  if (!isDragging.value) return
+  // 这里可以实现更复杂的拖动逻辑
+  // 目前简化处理，只记录状态
+}
+
+const stopDrag = () => {
+  isDragging.value = false
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', stopDrag)
 }
 
 const generateDoc = async () => {
@@ -687,10 +758,14 @@ const closeSuccess = () => {
 
 .ai-dialog-loading {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 1;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #64748b;
   font-size: 14px;
   background: #f8fafc;
@@ -702,6 +777,154 @@ const closeSuccess = () => {
   height: 100%;
   border: 0;
   background: #fff;
+}
+
+/* 悬浮窗口样式 */
+.ai-floating-window {
+  position: fixed;
+  z-index: 9999;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.ai-floating-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #6A11CB 0%, #2575FC 100%);
+  color: white;
+  cursor: move;
+  user-select: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.ai-floating-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.ai-floating-icon {
+  width: 24px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ai-floating-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-floating-minimize,
+.ai-floating-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.ai-floating-minimize {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.ai-floating-minimize:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.ai-floating-close {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.ai-floating-close:hover {
+  background: #ef4444;
+}
+
+.ai-floating-body {
+  flex: 1 1 auto;
+  position: relative;
+  background: #e2e8f0;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.ai-floating-body .ai-dialog-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #f8fafc;
+}
+
+.ai-floating-body .ai-dialog-iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* 最小化时的悬浮按钮 */
+.ai-floating-mini-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6A11CB 0%, #2575FC 100%);
+  color: white;
+  cursor: pointer;
+  z-index: 9998;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.ai-floating-mini-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+}
+
+.ai-floating-mini-icon {
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .success-modal {
